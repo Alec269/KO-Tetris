@@ -1,21 +1,26 @@
 // TetrisGame.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { BOARD_WIDTH, BOARD_HEIGHT, CELL_SIZE, TETROMINOS } from './types';
-import { type Position, type TetrominoType, type TouchStartInfo } from './types';
+import type { Position, TetrominoType, TouchStartInfo } from './types';
 import { styles } from './styles';
 import {
    createEmptyBoard,
    randomPiece,
-   rotatePiece,
+   rotateMatrix,
    checkCollision,
    mergePiece,
    clearLines,
    renderBoard
 } from './gameUtils';
 
+
 const TetrisGame: React.FC = () => {
    const [board, setBoard] = useState<(string | number)[][]>(createEmptyBoard());
-   const [currentPiece, setCurrentPiece] = useState<TetrominoType | null>(null);
+   const [currentPiece, setCurrentPiece] = useState<{
+      type: TetrominoType;
+      shape: number[][];
+      color: string;
+   } | null>(null);
    const [nextPiece, setNextPiece] = useState<TetrominoType | null>(null);
    const [position, setPosition] = useState<Position>({ x: 0, y: 0 });
    const [score, setScore] = useState<number>(0);
@@ -30,11 +35,22 @@ const TetrisGame: React.FC = () => {
    const softDropRef = useRef<boolean>(false);
 
    const spawnPiece = useCallback(() => {
-      const piece = nextPiece || randomPiece();
-      const startX = Math.floor(BOARD_WIDTH / 2) - 1;
+      const type = nextPiece || randomPiece();
+      const tetro = TETROMINOS[type];
+
+      const piece = {
+         type,
+         shape: tetro.shape.map(r => [...r]),
+         color: tetro.color
+      };
+
+      const startX =
+         Math.floor(BOARD_WIDTH / 2) -
+         Math.floor(piece.shape[0].length / 2);
+
       const startY = 0;
 
-      if (checkCollision(piece, { x: startX, y: startY }, board)) {
+      if (checkCollision(piece.shape, { x: startX, y: startY }, board)) {
          setGameOver(true);
          return;
       }
@@ -44,43 +60,65 @@ const TetrisGame: React.FC = () => {
       setPosition({ x: startX, y: startY });
    }, [nextPiece, board]);
 
+
    const movePiece = useCallback((dx: number, dy: number): boolean => {
       if (!currentPiece || gameOver || isPaused) return false;
 
       const newPos = { x: position.x + dx, y: position.y + dy };
-      if (!checkCollision(currentPiece, newPos, board)) {
+
+      if (!checkCollision(currentPiece.shape, newPos, board)) {
          setPosition(newPos);
          return true;
       }
       return false;
    }, [currentPiece, position, gameOver, isPaused, board]);
 
+
    const dropPiece = useCallback(() => {
+      if (!currentPiece) return;
+
       if (!movePiece(0, 1)) {
-         if (!currentPiece) return;
-         const merged = mergePiece(board, currentPiece, position);
-         const cleared = clearLines(merged, level, setScore, setLines, setLevel);
-         setBoard(cleared);
+         const merged = mergePiece(
+            board,
+            currentPiece.shape,
+            currentPiece.color,
+            position
+         );
+         setBoard(clearLines(merged, level, setScore, setLines, setLevel));
          spawnPiece();
       }
-   }, [movePiece, board, currentPiece, position, level, spawnPiece]);
+   }, [currentPiece, board, position, level, spawnPiece, movePiece]);
+
 
    const hardDrop = useCallback(() => {
       if (!currentPiece || gameOver || isPaused) return;
 
       let newY = position.y;
-      while (!checkCollision(currentPiece, { x: position.x, y: newY + 1 }, board)) {
+
+      while (
+         !checkCollision(
+            currentPiece.shape,
+            { x: position.x, y: newY + 1 },
+            board
+         )
+      ) {
          newY++;
       }
-      setPosition({ x: position.x, y: newY });
 
-      setTimeout(() => {
-         const merged = mergePiece(board, currentPiece, position);
-         const cleared = clearLines(merged, level, setScore, setLines, setLevel);
-         setBoard(cleared);
-         spawnPiece();
-      }, 50);
-   }, [currentPiece, position, gameOver, isPaused, board, level, spawnPiece]);
+      const finalPos = { x: position.x, y: newY };
+      setPosition(finalPos);
+
+      const merged = mergePiece(
+         board,
+         currentPiece.shape,
+         currentPiece.color,
+         finalPos
+      );
+
+      setBoard(clearLines(merged, level, setScore, setLines, setLevel));
+      spawnPiece();
+   }, [currentPiece, position, board, level, spawnPiece, gameOver, isPaused]);
+
 
    const softDrop = useCallback((active: boolean) => {
       softDropRef.current = active;
@@ -89,16 +127,15 @@ const TetrisGame: React.FC = () => {
    const rotate = useCallback(() => {
       if (!currentPiece || gameOver || isPaused) return;
 
-      const rotated = rotatePiece(currentPiece);
+      const rotated = rotateMatrix(currentPiece.shape);
+
       if (!checkCollision(rotated, position, board)) {
-         setCurrentPiece(prev => {
-            if (!prev) return prev;
-            const newShape = rotatePiece(prev);
-            TETROMINOS[prev].shape = newShape;
-            return prev;
-         });
+         setCurrentPiece(p =>
+            p ? { ...p, shape: rotated } : p
+         );
       }
-   }, [currentPiece, position, gameOver, isPaused, board]);
+   }, [currentPiece, position, board, gameOver, isPaused]);
+
 
    const resetGame = () => {
       setBoard(createEmptyBoard());
@@ -213,11 +250,22 @@ const TetrisGame: React.FC = () => {
       setTouchStart(null);
    };
 
-   const displayBoard = renderBoard(board, currentPiece, position);
+   const displayBoard = renderBoard(
+      board,
+      currentPiece?.shape ?? null,
+      currentPiece?.color ?? null,
+      position
+   );
+
+
 
    return (
       <div style={styles.container}>
-         <h1 style={styles.title}>TETRIS     </h1>
+         <div style={styles.mainLayout}>
+            <div style={{ width: '200px' }} /> {/* Spacer for symmetry */}
+            <h1 style={styles.title}>TETRIS</h1>
+            <div style={{ width: '200px' }} /> {/* Spacer for symmetry */}
+         </div>
 
          <div style={styles.mainLayout}>
             {/* Left Panel */}
@@ -376,3 +424,4 @@ const TetrisGame: React.FC = () => {
 };
 
 export default TetrisGame;
+
